@@ -122,22 +122,43 @@ private class LeadTriggerHandlerTest {
     }
 
     @isTest
-    static void testHandleLeadAutoConvert_AlreadyConverted() {
-        Lead alreadyConverted = new Lead(
-            FirstName = 'Converted',
-            LastName = 'Lead',
-            Company = 'CompanyZ',
-            Email = 'jane@example.com',
-            IsConverted = true
-        );
-        insert alreadyConverted;
+static void testHandleLeadAutoConvert_AlreadyConverted() {
+    // Get the test Account and Contact
+    Account acc = [SELECT Id FROM Account LIMIT 1];
+    Contact contact = [SELECT Id, AccountId, Email FROM Contact WHERE Email = 'jane@example.com' LIMIT 1];
 
-        Test.startTest();
-        LeadTriggerHandler.handleLeadAutoConvert(new List<Lead>{ alreadyConverted });
-        Test.stopTest();
+    // Step 1: Create and insert an unconverted lead with matching email
+    Lead leadToConvert = new Lead(
+        FirstName = 'Converted',
+        LastName = 'Lead',
+        Company = 'CompanyZ',
+        Email = contact.Email
+    );
+    insert leadToConvert;
 
-        Lead result = [SELECT Id, IsConverted FROM Lead WHERE Id = :alreadyConverted.Id];
-        System.assert(result.IsConverted, 'Expected already converted lead to stay converted without errors');
+    // Step 2: Convert it using Database.convertLead
+    LeadStatus status = [SELECT Id, MasterLabel FROM LeadStatus WHERE IsConverted = true LIMIT 1];
+    Database.LeadConvert lc = new Database.LeadConvert();
+    lc.setLeadId(leadToConvert.Id);
+    lc.setContactId(contact.Id);
+    lc.setAccountId(contact.AccountId);
+    lc.setConvertedStatus(status.MasterLabel);
+    lc.setDoNotCreateOpportunity(true);
+
+    Database.convertLead(lc);
+
+    // Step 3: Re-query to ensure it's converted
+    Lead convertedLead = [SELECT Id, IsConverted, Email FROM Lead WHERE Id = :leadToConvert.Id];
+    System.assert(convertedLead.IsConverted, 'Lead should have been converted already');
+
+    // Step 4: Call your handler again, ensure no error or recursion
+    Test.startTest();
+    LeadTriggerHandler.handleLeadAutoConvert(new List<Lead>{ convertedLead });
+    Test.stopTest();
+
+    // Final assert to ensure it's still converted and test didn't fail
+    convertedLead = [SELECT Id, IsConverted FROM Lead WHERE Id = :leadToConvert.Id];
+    System.assert(convertedLead.IsConverted, 'Expected already converted lead to stay converted without errors');
     }
 }
 
